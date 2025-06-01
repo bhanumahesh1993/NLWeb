@@ -14,6 +14,8 @@ import threading
 
 from config.config import CONFIG
 from utils.logging_config_helper import get_configured_logger, LogLevel
+from embedding.ollama_embedding import get_ollama_embeddings, get_ollama_batch_embeddings
+
 
 logger = get_configured_logger("embedding_wrapper")
 
@@ -70,6 +72,15 @@ async def get_embedding(
 
     try:
         # Use a timeout wrapper for all embedding calls
+        if provider == "ollama":
+            logger.debug("Getting Ollama embeddings")
+            result = await asyncio.wait_for(
+                get_ollama_embeddings(text, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"Ollama embeddings received, dimension: {len(result)}")
+            return result
+
         if provider == "openai":
             logger.debug("Getting OpenAI embeddings")
             # Import here to avoid potential circular imports
@@ -174,6 +185,15 @@ async def batch_get_embeddings(
     
     try:
         # Provider-specific batch implementations with timeout handling
+        if provider == "ollama":
+            # Use Ollama's batch embedding API
+            logger.debug("Getting Ollama batch embeddings")
+            result = await asyncio.wait_for(
+                get_ollama_batch_embeddings(texts, model=model_id),
+                timeout=timeout
+            )
+            logger.debug(f"Ollama batch embeddings received, count: {len(result)}")
+            return result
         if provider == "openai":
             # Use OpenAI's batch embedding API
             logger.debug("Getting OpenAI batch embeddings")

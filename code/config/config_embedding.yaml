@@ -1,4 +1,4 @@
-preferred_provider: azure_openai
+preferred_provider: ollama
 
 providers:
   openai:
@@ -21,3 +21,7 @@ providers:
     api_endpoint_env: SNOWFLAKE_ACCOUNT_URL
     api_version_env: "2024-10-01"
     model: snowflake-arctic-embed-m-v1.5
+
+  ollama:
+    api_endpoint_env: OLLAMA_ENDPOINT
+    model: nomic-embed-text:v1.5

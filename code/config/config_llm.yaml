@@ -1,4 +1,4 @@
-preferred_endpoint: azure_openai
+preferred_endpoint: ollama
 
 endpoints:
   inception:
@@ -67,3 +67,10 @@ endpoints:
     models:
       high: claude-3-5-sonnet
       low: llama3.1-8b
+      
+  ollama:
+    api_endpoint_env: OLLAMA_ENDPOINT  # or just use the literal URL
+    llm_type: ollama
+    models:
+      high: llama3.2:latest  # or whatever model you have locally
+      low: llama3.2:latest

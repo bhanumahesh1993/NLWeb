@@ -115,9 +115,10 @@ class URLToRSS:
         Discover URLs from sitemap.xml files.
         
         Returns:
-            List of URLs found in sitemaps
+            List of URLs found in sitemaps (filtered and ready for crawling)
         """
         sitemap_urls = []
+        all_sitemap_urls = []  # Keep track of ALL URLs found for saving to file
         
         # Common sitemap locations
         sitemap_locations = [
@@ -140,19 +141,33 @@ class URLToRSS:
         for sitemap_url in sitemap_locations:
             urls_from_sitemap = await self._parse_sitemap(sitemap_url)
             if urls_from_sitemap:
+                all_sitemap_urls.extend(urls_from_sitemap)  # Save ALL URLs found
                 sitemap_urls.extend(urls_from_sitemap)
                 print(f"Found {len(urls_from_sitemap)} URLs in {sitemap_url}")
         
-        # Remove duplicates and validate URLs
+        # Store all URLs for saving to file later
+        self.all_sitemap_urls = list(set(all_sitemap_urls))  # Remove duplicates but keep all
+        
+        # Remove duplicates and validate URLs for crawling
         unique_urls = []
         seen = set()
+        valid_count = 0
+        invalid_count = 0
+        
         for url in sitemap_urls:
             normalized_url = self.normalize_url(url)
-            if normalized_url not in seen and self.is_valid_url(normalized_url):
-                unique_urls.append(normalized_url)
+            if normalized_url not in seen:
                 seen.add(normalized_url)
+                if self.is_valid_url(normalized_url):
+                    unique_urls.append(normalized_url)
+                    valid_count += 1
+                else:
+                    invalid_count += 1
         
-        print(f"📍 Total unique URLs found in sitemaps: {len(unique_urls)}")
+        print(f"📍 Total URLs found in sitemaps: {len(self.all_sitemap_urls)}")
+        print(f"📍 Valid URLs for crawling: {valid_count}")
+        print(f"📍 Invalid/filtered URLs: {invalid_count}")
+        
         return unique_urls[:self.max_pages]  # Limit to max_pages
     
     async def _check_robots_txt(self) -> List[str]:
@@ -225,14 +240,17 @@ class URLToRSS:
             print(f"Error parsing sitemap {sitemap_url}: {e}")
             return []
 
-    def save_sitemap_file(self, sitemap_urls: List[str]):
+    def save_sitemap_file(self, sitemap_urls: List[str] = None):
         """
         Save discovered sitemap URLs to a file.
         
         Args:
-            sitemap_urls: List of URLs to save
+            sitemap_urls: List of URLs to save (optional, defaults to all_sitemap_urls)
         """
-        if not sitemap_urls:
+        # Use all_sitemap_urls if available, otherwise fall back to provided list
+        urls_to_save = getattr(self, 'all_sitemap_urls', sitemap_urls or [])
+        
+        if not urls_to_save:
             print("No sitemap URLs to save")
             return
         
@@ -242,12 +260,27 @@ class URLToRSS:
             with open(filename, 'w', encoding='utf-8') as f:
                 f.write(f"# Sitemap URLs for {self.domain}\n")
                 f.write(f"# Generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"# Total URLs: {len(sitemap_urls)}\n\n")
+                f.write(f"# Total URLs: {len(urls_to_save)}\n")
                 
-                for url in sitemap_urls:
-                    f.write(f"{url}\n")
+                # Group URLs by domain for better organization
+                grouped_urls = {}
+                for url in urls_to_save:
+                    domain = urlparse(url).netloc
+                    if domain not in grouped_urls:
+                        grouped_urls[domain] = []
+                    grouped_urls[domain].append(url)
+                
+                f.write(f"# Domains found: {', '.join(sorted(grouped_urls.keys()))}\n\n")
+                
+                # Write URLs grouped by domain
+                for domain in sorted(grouped_urls.keys()):
+                    f.write(f"# URLs from {domain} ({len(grouped_urls[domain])} URLs)\n")
+                    for url in sorted(grouped_urls[domain]):
+                        f.write(f"{url}\n")
+                    f.write("\n")
             
             print(f"💾 Sitemap URLs saved to: {filename}")
+            print(f"💾 Total URLs saved: {len(urls_to_save)}")
             
         except Exception as e:
             print(f"Error saving sitemap file: {e}")
@@ -265,12 +298,22 @@ class URLToRSS:
         try:
             parsed_url = urlparse(url)
             
-            # Check if it's the same domain
-            if parsed_url.netloc != self.domain:
-                return False
-                
             # Check if it has a valid scheme
             if parsed_url.scheme not in ['http', 'https']:
+                return False
+            
+            # More flexible domain matching - handle www and subdomain variants
+            url_domain = parsed_url.netloc.lower()
+            base_domain = self.domain.lower()
+            
+            # Remove www. prefix for comparison
+            if url_domain.startswith('www.'):
+                url_domain = url_domain[4:]
+            if base_domain.startswith('www.'):
+                base_domain = base_domain[4:]
+            
+            # Check if domains match (exact match or subdomain of base domain)
+            if not (url_domain == base_domain or url_domain.endswith('.' + base_domain)):
                 return False
                 
             # Skip file downloads
@@ -687,8 +730,7 @@ async def main():
         converter.sitemap_urls = sitemap_urls
         
         # Save sitemap URLs to file
-        if sitemap_urls:
-            converter.save_sitemap_file(sitemap_urls)
+        converter.save_sitemap_file(sitemap_urls)
         
         # Choose crawling strategy
         if sitemap_urls and (args.sitemap_only or len(sitemap_urls) >= args.max_pages):

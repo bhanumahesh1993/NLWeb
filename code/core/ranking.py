@@ -62,13 +62,14 @@ The user's question is: {request.query}. The item's description is {item.descrip
         self.ranking_type = ranking_type
         self._results_lock = asyncio.Lock()  # Add lock for thread-safe operations
 
+    # In ranking.py, fix the score comparison issues
+
     async def rankItem(self, url, json_str, name, site):
         if not self.handler.connection_alive_event.is_set():
             logger.warning("Connection lost, skipping item ranking")
             return
         if (self.ranking_type == Ranking.FAST_TRACK and self.handler.abort_fast_track_event.is_set()):
             logger.info("Fast track aborted, skipping item ranking")
-            logger.info("Aborting fast track")
             return
         try:
             logger.debug(f"Ranking item: {name} from {site}")
@@ -78,7 +79,20 @@ The user's question is: {request.query}. The item's description is {item.descrip
             
             logger.debug(f"Sending ranking request to LLM for item: {name}")
             ranking = await ask_llm(prompt, ans_struc, level="low")
-            logger.debug(f"Received ranking score: {ranking.get('score', 'N/A')} for item: {name}")
+            
+            # Fix: Ensure score is an integer
+            score = ranking.get('score', 0)
+            if isinstance(score, str):
+                try:
+                    score = int(score)
+                except ValueError:
+                    score = 0
+            elif not isinstance(score, int):
+                score = int(score) if score else 0
+            
+            ranking['score'] = score  # Update the ranking with the fixed score
+            
+            logger.debug(f"Received ranking score: {score} for item: {name}")
             
             ansr = {
                 'url': url,
@@ -89,34 +103,50 @@ The user's question is: {request.query}. The item's description is {item.descrip
                 'sent': False,
             }
             
-            if (ranking["score"] > self.EARLY_SEND_THRESHOLD):
-                logger.info(f"High score item: {name} (score: {ranking['score']}) - sending early {self.ranking_type_str}")
+            # Fix: Use the converted integer score for comparison
+            if score > self.EARLY_SEND_THRESHOLD:
+                logger.info(f"High score item: {name} (score: {score}) - sending early {self.ranking_type_str}")
                 try:
                     await self.sendAnswers([ansr])
                 except (BrokenPipeError, ConnectionResetError):
                     logger.warning(f"Client disconnected while sending early answer for {name}")
-                    print(f"Client disconnected while sending early answer for {name}")
                     self.handler.connection_alive_event.clear()
                     return
             
-            async with self._results_lock:  # Use lock when modifying shared state
+            async with self._results_lock:
                 self.rankedAnswers.append(ansr)
             logger.debug(f"Item {name} added to ranked answers")
         
         except Exception as e:
             logger.error(f"Error in rankItem for {name}: {str(e)}")
             logger.debug(f"Full error trace: ", exc_info=True)
-            print(f"Error in rankItem for {name}: {str(e)}")
 
+    # Also fix the score comparisons in other methods
     def shouldSend(self, result):
         should_send = False
         if (self.num_results_sent < self.NUM_RESULTS_TO_SEND - 5):
             should_send = True
         else:
             for r in self.rankedAnswers:
-                if r["sent"] == True and r["ranking"]["score"] < result["ranking"]["score"]:
-                    should_send = True
-                    break
+                if r["sent"] == True:
+                    # Fix: Ensure both scores are integers for comparison
+                    r_score = r["ranking"]["score"]
+                    if isinstance(r_score, str):
+                        try:
+                            r_score = int(r_score)
+                        except ValueError:
+                            r_score = 0
+                    
+                    result_score = result["ranking"]["score"]
+                    if isinstance(result_score, str):
+                        try:
+                            result_score = int(result_score)
+                        except ValueError:
+                            result_score = 0
+                    
+                    if r_score < result_score:
+                        should_send = True
+                        break
         
         logger.debug(f"Should send result {result['name']}? {should_send} (sent: {self.num_results_sent})")
         return should_send
